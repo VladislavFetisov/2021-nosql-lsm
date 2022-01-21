@@ -1,6 +1,7 @@
 package ru.mail.polis.lsm.vladislav_fetisov;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
@@ -23,9 +24,9 @@ import ru.mail.polis.lsm.DAOConfig;
 import ru.mail.polis.lsm.Record;
 
 public class InMemory implements DAO {
-    private final String FILE_NAME = "DAO";
-    private final String TEMP_NAME = "TEMP";
-    private static Method CLEAN;
+    private final String FILE_NAME = "DAO.dat";
+    private final String TEMP_NAME = "TEMP.dat";
+    private static final Method CLEAN;
 
     static {
         try {
@@ -33,7 +34,7 @@ public class InMemory implements DAO {
             CLEAN = aClass.getDeclaredMethod("unmap", MappedByteBuffer.class);
             CLEAN.setAccessible(true);
         } catch (ClassNotFoundException | NoSuchMethodException e) {
-            e.printStackTrace();
+            throw new IllegalStateException();
         }
     }
 
@@ -41,12 +42,21 @@ public class InMemory implements DAO {
     private final NavigableMap<ByteBuffer, Record> storage = new ConcurrentSkipListMap<>();
     private final DAOConfig config;
 
-    public InMemory(DAOConfig config) {
+    public InMemory(DAOConfig config) throws IOException {
         this.config = config;
         Path path = config.getDir().resolve(FILE_NAME);
+        Path temp = config.getDir().resolve(TEMP_NAME);
         if (!Files.exists(path)) {
-            nmap = null;
-            return;
+            if (Files.exists(temp)) {
+                try {
+                    Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException e) {
+                    throw new IOException();
+                }
+            } else {
+                nmap = null;
+                return;
+            }
         }
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
             nmap = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
@@ -56,8 +66,9 @@ public class InMemory implements DAO {
                 storage.put(key, Record.of(key, value));
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new IOException();
         }
+
     }
 
     private ByteBuffer read(MappedByteBuffer from) {
@@ -85,13 +96,16 @@ public class InMemory implements DAO {
     }
 
 
+
     @Override
     public void close() throws IOException {
         Path path = config.getDir().resolve(FILE_NAME);
         Path temp = config.getDir().resolve(TEMP_NAME);
-        Files.deleteIfExists(temp);
         ByteBuffer forLength = ByteBuffer.allocate(Integer.BYTES);
-        try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+        try (FileChannel channel = FileChannel.open(temp,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING)) {
             for (Record record : storage.values()) {
                 write(record.getKey(), channel, forLength);
                 write(record.getValue(), channel, forLength);
@@ -128,3 +142,18 @@ public class InMemory implements DAO {
     }
 
 }
+//try {
+//                Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+//                Method clean = unsafeClass.getMethod("invokeCleaner", ByteBuffer.class);
+//                clean.setAccessible(true);
+//                Field theUnsafeField = unsafeClass.getDeclaredField("theUnsafe");
+//                theUnsafeField.setAccessible(true);
+//                Object theUnsafe = theUnsafeField.get(null);
+//                clean.invoke(theUnsafe, nmap);
+//            } catch (ClassNotFoundException |
+//                    NoSuchFieldException |
+//                    NoSuchMethodException |
+//                    IllegalAccessException |
+//                    InvocationTargetException e) {
+//                throw new IllegalStateException();
+//            }
