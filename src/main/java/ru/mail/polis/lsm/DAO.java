@@ -3,11 +3,13 @@ package ru.mail.polis.lsm;
 import java.io.Closeable;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 import javax.annotation.Nullable;
 
@@ -46,7 +48,7 @@ public interface DAO extends Closeable {
             case 1:
                 return iterators.get(0);
             case 2:
-                return mergeTwo(iterators.get(0), iterators.get(1));
+                return mergeTwo(new PeekingIterator<>(iterators.get(0)), new PeekingIterator<>(iterators.get(1)));
             default:
                 return mergeList(iterators);
         }
@@ -55,68 +57,79 @@ public interface DAO extends Closeable {
     static Iterator<Record> mergeList(List<Iterator<Record>> iterators) {
         return iterators
                 .stream()
+                .map(PeekingIterator::new)
                 .reduce(DAO::mergeTwo)
                 .get();
     }
 
-    static Iterator<Record> mergeTwo(Iterator<Record> it1, Iterator<Record> it2) {
-        List<Record> result = new ArrayList<>();
-        Record record1 = null;
-        Record record2 = null;
-        boolean fromFirst = true;
-        boolean fromSecond = true;
-        while (true) {
-            if (fromFirst && fromSecond) {
-                if (!it2.hasNext()) {
-                    return mergeRightPart(it1, result);
+    static PeekingIterator<Record> mergeTwo(PeekingIterator<Record> it1, PeekingIterator<Record> it2) {
+        return new PeekingIterator<>(new Iterator<>() {
+
+            @Override
+            public boolean hasNext() {
+                return it1.hasNext() || it2.hasNext();
+            }
+
+            @Override
+            public Record next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
                 }
                 if (!it1.hasNext()) {
-                    return mergeRightPart(it2, result);
+                    return it2.next();
                 }
-                record1 = it1.next();
-                record2 = it2.next();
-            } else if (fromFirst) {
-                if (!it1.hasNext()) {
-                    result.add(record2);
-                    return mergeRightPart(it2, result);
-                }
-                record1 = it1.next();
-            } else {
                 if (!it2.hasNext()) {
-                    result.add(record1);
-                    return mergeRightPart(it1, result);
+                    return it1.next();
                 }
-                record2 = it2.next();
+                Record record1 = it1.peek();
+                Record record2 = it2.peek();
+                int compare = record1.getKey().compareTo(record2.getKey());
+                if (compare < 0) {
+                    it1.next();
+                    return record1;
+                } else if (compare == 0) {
+                    it1.next();
+                    it2.next();
+                    return record2;
+                } else {
+                    it2.next();
+                    return record2;
+                }
             }
-            int compare = DAO.toString(record1.getKey()).compareTo(DAO.toString(record2.getKey()));
-            if (compare > 0) {
-                result.add(record2);
-                fromSecond = true;
-                fromFirst = false;
-            } else if (compare < 0) {
-                result.add(record1);
-                fromFirst = true;
-                fromSecond = false;
-            } else {
-                result.add(record2);
-                fromFirst = true;
-                fromSecond = true;
+        });
+    }
+
+
+    class PeekingIterator<T> implements Iterator<T> {
+        private final Iterator<T> iterator;
+        private T current = null;
+
+        public PeekingIterator(Iterator<T> iterator) {
+            this.iterator = iterator;
+        }
+
+
+        public T peek() {
+            if (current == null) {
+                return current = iterator.next();
             }
+            return current;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return iterator.hasNext() || current != null;
+        }
+
+        @Override
+        public T next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            T res = peek();
+            current = null;
+            return res;
         }
     }
 
-    static Iterator<Record> mergeRightPart(Iterator<Record> iterator, List<Record> result) {
-        while (iterator.hasNext()) {
-            result.add(iterator.next());
-        }
-        return result.iterator();
-    }
-
-    static String toString(ByteBuffer buffer) {
-        try {
-            return StandardCharsets.UTF_8.newDecoder().decode(buffer).toString();
-        } catch (CharacterCodingException e) {
-            throw new RuntimeException(e);
-        }
-    }
 }

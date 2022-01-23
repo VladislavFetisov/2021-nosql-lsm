@@ -38,7 +38,7 @@ public class InMemory implements DAO {
         }
     }
 
-    private static MappedByteBuffer nmap;
+    private final MappedByteBuffer nmap;
     private final NavigableMap<ByteBuffer, Record> storage = new ConcurrentSkipListMap<>();
     private final DAOConfig config;
 
@@ -96,7 +96,6 @@ public class InMemory implements DAO {
     }
 
 
-
     @Override
     public void close() throws IOException {
         Path path = config.getDir().resolve(FILE_NAME);
@@ -116,7 +115,7 @@ public class InMemory implements DAO {
             try {
                 CLEAN.invoke(null, nmap);
             } catch (InvocationTargetException | IllegalAccessException e) {
-                e.printStackTrace();
+                throw new IllegalStateException();
             }
         }
         Files.deleteIfExists(path);
@@ -142,18 +141,3 @@ public class InMemory implements DAO {
     }
 
 }
-//try {
-//                Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-//                Method clean = unsafeClass.getMethod("invokeCleaner", ByteBuffer.class);
-//                clean.setAccessible(true);
-//                Field theUnsafeField = unsafeClass.getDeclaredField("theUnsafe");
-//                theUnsafeField.setAccessible(true);
-//                Object theUnsafe = theUnsafeField.get(null);
-//                clean.invoke(theUnsafe, nmap);
-//            } catch (ClassNotFoundException |
-//                    NoSuchFieldException |
-//                    NoSuchMethodException |
-//                    IllegalAccessException |
-//                    InvocationTargetException e) {
-//                throw new IllegalStateException();
-//            }

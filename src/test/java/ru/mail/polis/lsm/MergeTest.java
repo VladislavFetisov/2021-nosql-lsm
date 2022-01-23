@@ -1,9 +1,5 @@
 package ru.mail.polis.lsm;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import org.opentest4j.AssertionFailedError;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -15,6 +11,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.opentest4j.AssertionFailedError;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -59,20 +59,20 @@ class MergeTest {
             for (int prefix = 0; prefix < count; prefix++) {
                 dao.add(createDAO(data, prefix));
             }
-
-           // List<Iterator<Record>> iterators = dao.stream().map(d -> d.range(null, null)).collect(Collectors.toList());
-//            Iterator<Record> iterator = DAO.merge(iterators);
-//            for (Map.Entry<String, Integer> entry : expected.entrySet()) {
-//                if (!iterator.hasNext()) {
-//                    throw new AssertionFailedError("Iterator ended on key " + entry.getKey());
-//                }
-//                Record next = iterator.next();
-//                assertEquals(Utils.toString(key(Integer.parseInt(entry.getKey()))), Utils.toString(next.getKey()));
-//                assertEquals(Utils.toString(valueWithSuffix(entry.getValue(), suffix)), Utils.toString(next.getValue()));
-//            }
-//            if (iterator.hasNext()) {
-//                throw new AssertionFailedError("Iterator has extra record with key " + iterator.next().getKey());
-//            }
+            List<Iterator<Record>> iterators = dao.stream().map(d -> d.range(null, null)).collect(Collectors.toList());
+            Iterator<Record> iterator = DAO.merge(iterators);
+            for (Map.Entry<String, Integer> entry : expected.entrySet()) {
+                if (!iterator.hasNext()) {
+                    throw new AssertionFailedError("Iterator ended on key " + entry.getKey());
+                }
+                Record next = iterator.next();
+                assertEquals(Utils.toString(key(Integer.parseInt(entry.getKey()))), Utils.toString(next.getKey()));
+                assertEquals(Utils.toString(valueWithSuffix(entry.getValue(), suffix)), Utils.toString(next.getValue()));
+            }
+            if (iterator.hasNext()) {
+                System.out.println(iterator.next());
+                throw new AssertionFailedError("Iterator has extra record with key " + iterator.next().getKey());
+            }
         } catch (OutOfMemoryError ez) {
             throw new RuntimeException(ez);  // NEVER DO IT IN PRODUCTION CODE!!!
         } finally {
