@@ -2,7 +2,7 @@ package ru.mail.polis.lsm;
 
 import java.io.IOException;
 
-import ru.mail.polis.lsm.vladislav_fetisov.InMemory;
+import ru.mail.polis.lsm.vladislav_fetisov.LsmDAO;
 
 public final class DAOFactory {
 
@@ -16,7 +16,7 @@ public final class DAOFactory {
     public static DAO create(DAOConfig config) throws IOException {
         assert config.getDir().toFile().exists();
 
-        return new InMemory(config);
+        return new LsmDAO(config);
     }
 
 }

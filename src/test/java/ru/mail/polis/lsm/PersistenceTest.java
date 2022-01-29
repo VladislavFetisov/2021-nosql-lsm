@@ -8,13 +8,20 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Iterator;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static ru.mail.polis.lsm.Utils.key;
+import static ru.mail.polis.lsm.Utils.keyWithSuffix;
 import static ru.mail.polis.lsm.Utils.recursiveDelete;
+import static ru.mail.polis.lsm.Utils.sizeBasedRandomData;
+import static ru.mail.polis.lsm.Utils.sizeBasedZeros;
 import static ru.mail.polis.lsm.Utils.value;
+import static ru.mail.polis.lsm.Utils.valueWithSuffix;
 import static ru.mail.polis.lsm.Utils.wrap;
 
 class PersistenceTest {
@@ -131,5 +138,85 @@ class PersistenceTest {
                 assertEquals(value, dao.range(key, null).next().getValue());
             }
         }
+    }
+
+    @Test
+    void hugeRecords(@TempDir Path data) throws IOException {
+        // Reference value
+        System.out.println(data);
+        int size = 1024 * 1024;
+        byte[] suffix = sizeBasedRandomData(size);
+        byte[] zeros = sizeBasedZeros(size);
+        int recordsCount = (int) (TestDaoWrapper.MAX_HEAP * 15 / size);
+        List<String> keys = generateSequence(recordsCount);
+
+        prepareHugeDao(data, recordsCount, suffix, keys, zeros);
+
+        // Check
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            Iterator<Record> range = dao.range(null, null);
+
+            for (int i = 0; i < recordsCount; i++) {
+                verifyNext(suffix, range, i, keys, zeros);
+            }
+            assertFalse(range.hasNext());
+        }
+    }
+
+    private List<String> generateSequence(int recordsCount) {
+        return IntStream.range(0, recordsCount)
+                .mapToObj(String::valueOf)
+                .sorted()
+                .collect(Collectors.toList());
+    }
+
+    @Test
+    void hugeRecordsSearch(@TempDir Path data) throws IOException {
+        System.out.println(data);
+        // Reference value
+        int size = 1024 * 1024;
+        byte[] suffix = sizeBasedRandomData(size);
+        byte[] zeros = sizeBasedZeros(size);
+        int recordsCount = (int) (TestDaoWrapper.MAX_HEAP * 15 / size);
+        List<String> keys = generateSequence(recordsCount + 1);
+
+        prepareHugeDao(data, recordsCount, suffix, keys, zeros);
+
+        // Check
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            int searchStep = 4;
+
+            for (int i = 0; i < recordsCount / searchStep; i++) {
+                ByteBuffer keyFrom = keyWithSuffix(keys.get(i * searchStep), zeros);
+                ByteBuffer keyTo = keyWithSuffix(keys.get(i * searchStep + searchStep), zeros);
+                Iterator<Record> range = dao.range(keyFrom, keyTo);
+                for (int j = 0; j < searchStep; j++) {
+                    verifyNext(suffix, range, i * searchStep + j, keys, zeros);
+                }
+                assertFalse(range.hasNext());
+            }
+        }
+    }
+
+    private void verifyNext(byte[] suffix, Iterator<Record> range, int index, List<String> keys, byte[] zeros) {
+        ByteBuffer key = keyWithSuffix(keys.get(index), zeros);
+        ByteBuffer value = valueWithSuffix(index, suffix);
+
+        Record next = range.next();
+
+        assertEquals(key, next.getKey());
+        assertEquals(value, next.getValue());
+    }
+
+    private void prepareHugeDao(@TempDir Path data, int recordsCount, byte[] suffix, List<String> keys, byte[] zeros) throws IOException {
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            for (int i = 0; i < recordsCount; i++) {
+                ByteBuffer key = keyWithSuffix(keys.get(i), zeros);
+                ByteBuffer value = valueWithSuffix(i, suffix);
+                dao.upsert(Record.of(key, value));
+            }
+
+        }
+
     }
 }

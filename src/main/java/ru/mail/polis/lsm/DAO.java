@@ -3,13 +3,12 @@ package ru.mail.polis.lsm;
 import java.io.Closeable;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CharsetDecoder;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
 
@@ -111,6 +110,9 @@ public interface DAO extends Closeable {
 
         public T peek() {
             if (current == null) {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
                 return current = iterator.next();
             }
             return current;
@@ -123,13 +125,11 @@ public interface DAO extends Closeable {
 
         @Override
         public T next() {
-            if (!hasNext()) {
-                throw new NoSuchElementException();
-            }
             T res = peek();
             current = null;
             return res;
         }
+
     }
 
 }

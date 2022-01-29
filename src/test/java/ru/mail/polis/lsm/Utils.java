@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -59,7 +60,28 @@ class Utils {
         return result;
     }
 
+    static byte[] sizeBasedZeros(int size) {
+        byte[] result = new byte[size];
+        Arrays.fill(result, (byte) ('0'));
+        return result;
+    }
+
+    //    static ByteBuffer keyWithSuffix(int key, byte[] suffix) {
+//        byte[] keyBytes = (KEY_PREFIX + "_" + key).getBytes(StandardCharsets.UTF_8);
+//        byte[] result = new byte[keyBytes.length + suffix.length];
+//        System.arraycopy(keyBytes, 0, result, 0, keyBytes.length);
+//        System.arraycopy(suffix, 0, result, keyBytes.length, suffix.length);
+//        return ByteBuffer.wrap(result);
+//    }
     static ByteBuffer keyWithSuffix(int key, byte[] suffix) {
+        byte[] keyBytes = (KEY_PREFIX + "_" + key).getBytes(StandardCharsets.UTF_8);
+        byte[] result = new byte[keyBytes.length + suffix.length];
+        System.arraycopy(keyBytes, 0, result, 0, keyBytes.length);
+        System.arraycopy(suffix, 0, result, keyBytes.length, suffix.length);
+        return ByteBuffer.wrap(result);
+    }
+
+    static ByteBuffer keyWithSuffix(String key, byte[] suffix) {
         byte[] keyBytes = (KEY_PREFIX + "_" + key).getBytes(StandardCharsets.UTF_8);
         byte[] result = new byte[keyBytes.length + suffix.length];
         System.arraycopy(keyBytes, 0, result, 0, keyBytes.length);
@@ -100,8 +122,12 @@ class Utils {
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
 
         List<String> i1List = new ArrayList<>();
-        i1.forEachRemaining(r -> i1List.add(toString(decoder, r.getKey(), r.getValue())));
-
+        //i1.forEachRemaining(r -> i1List.add(toString(decoder, r.getKey(), r.getValue())));
+        while (i1.hasNext()) {
+            Record r = i1.next();
+            System.out.println(r);
+            i1List.add(toString(decoder, r.getKey(), r.getValue()));
+        }
         List<String> i2List = new ArrayList<>();
         for (Map.Entry<ByteBuffer, ByteBuffer> entry : i2) {
             i2List.add(toString(decoder, entry.getKey(), entry.getValue()));

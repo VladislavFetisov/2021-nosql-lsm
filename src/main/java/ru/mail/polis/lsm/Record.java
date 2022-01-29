@@ -1,6 +1,7 @@
 package ru.mail.polis.lsm;
 
 import javax.annotation.Nullable;
+
 import java.nio.ByteBuffer;
 
 @SuppressWarnings("JavaLangClash")
@@ -34,4 +35,8 @@ public class Record {
         return value == null;
     }
 
+    public int size() {
+        int valueSize = (value == null) ? 0 : value.remaining();
+        return 2 * Integer.BYTES + key.remaining() + valueSize;
+    }
 }

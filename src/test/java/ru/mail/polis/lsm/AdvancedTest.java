@@ -30,7 +30,9 @@ public class AdvancedTest {
 
             iterator = dao.range(null, null);
         }
-
+        while (iterator.hasNext()) {
+            System.out.println(iterator.next());
+        }
         assertEquals(iterator, new TreeMap<>(map).entrySet());
     }
 
