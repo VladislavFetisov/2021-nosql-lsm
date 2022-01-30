@@ -76,7 +76,8 @@ public class LsmDAO implements DAO {
             ByteBuffer key = record.getKey();
             fileOffsets.put(key, memoryConsumption.getAndAdd(size));
             if (record.isTombstone()) {
-                //здесь можно уменьшать размер памяти.
+                //Здесь можно было бы уменьшать memoryConsumption, но по GC не заберет это значение это не очень
+                //правдивая информация
             }
             storage.put(key, record);
         }

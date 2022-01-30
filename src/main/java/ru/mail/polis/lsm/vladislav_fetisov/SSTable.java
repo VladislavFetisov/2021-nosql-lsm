@@ -18,7 +18,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import ru.mail.polis.lsm.Record;
@@ -57,7 +56,7 @@ class SSTable implements Closeable {
         if (files == null) {
             return Collections.emptyList();
         }
-        return Arrays.stream(files)
+        List<SSTable> sortedSSTables = Arrays.stream(files)
                 .map(file1 -> Integer.parseInt(file1.getName()))
                 .sorted()
                 .map(integer -> {
@@ -65,6 +64,7 @@ class SSTable implements Closeable {
                     return new SSTable(tableName);
                 })
                 .collect(Collectors.toList());
+        return sortedSSTables;
 
     }
 
@@ -83,7 +83,7 @@ class SSTable implements Closeable {
             if (fromKey == null) {
                 leftPos = 0;
             } else {
-                temp = leftBinarySearch(0, offsets.length, fromKey, nmap);
+                temp = Utils.leftBinarySearch(0, offsets.length, fromKey, nmap, offsets);
                 if (temp == -1) {
                     return Collections.emptyIterator();
                 }
@@ -92,7 +92,7 @@ class SSTable implements Closeable {
             if (toKey == null) {
                 rightPos = (int) channel.size();
             } else {
-                temp = rightBinarySearch(0, offsets.length, toKey, nmap);
+                temp = Utils.rightBinarySearch(0, offsets.length, toKey, nmap, offsets);
                 if (temp == -1) {
                     return Collections.emptyIterator();
                 }
@@ -142,60 +142,6 @@ class SSTable implements Closeable {
         ByteBuffer limit = from.slice().limit(length);
         from.position(from.position() + length);
         return limit;
-    }
-
-    private int leftBinarySearch(int l, int r, @Nonnull ByteBuffer key, MappedByteBuffer array) {
-        while (l != r) {
-            int mid = (l + r) / 2;
-            int res = compareKeys(mid, key, array);
-            if (res == 0) {
-                return mid;
-            }
-            if (res > 0) {
-                r = mid;
-            } else {
-                l = mid + 1;
-            }
-        }
-        if (l == offsets.length) {
-            return -1;
-        }
-        return l;
-    }
-
-    private int rightBinarySearch(int l, int r, @Nonnull ByteBuffer key, MappedByteBuffer array) {
-        if (compareKeys(l, key, array) >= 0) {
-            return -1;
-        }
-        while (l != r) {
-            int mid = (l + r + 1) / 2;
-            if (mid >= r) {
-                return r;
-            }
-            int res = compareKeys(mid, key, array);
-            if (res == 0) {
-                return mid;
-            }
-            if (res > 0) {
-                r = mid - 1;
-            } else {
-                l = mid;
-            }
-        }
-        return l;
-    }
-
-    private int compareKeys(int mid, ByteBuffer key, MappedByteBuffer array) {
-        ByteBuffer buffer = readKey(array, mid);
-        return buffer.compareTo(key);
-    }
-
-
-    private ByteBuffer readKey(MappedByteBuffer from, int index) {
-        from.position(offsets[index]);
-        int length = from.getInt();
-        ByteBuffer key = from.slice().limit(length);
-        return key.asReadOnlyBuffer();
     }
 
     static SSTable write(Iterator<Record> records, Path tableName, Iterator<Integer> offsets) throws IOException {
