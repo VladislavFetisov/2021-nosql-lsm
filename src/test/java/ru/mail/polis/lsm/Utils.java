@@ -122,12 +122,7 @@ class Utils {
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
 
         List<String> i1List = new ArrayList<>();
-        //i1.forEachRemaining(r -> i1List.add(toString(decoder, r.getKey(), r.getValue())));
-        while (i1.hasNext()) {
-            Record r = i1.next();
-            System.out.println(r);
-            i1List.add(toString(decoder, r.getKey(), r.getValue()));
-        }
+        i1.forEachRemaining(r -> i1List.add(toString(decoder, r.getKey(), r.getValue())));
         List<String> i2List = new ArrayList<>();
         for (Map.Entry<ByteBuffer, ByteBuffer> entry : i2) {
             i2List.add(toString(decoder, entry.getKey(), entry.getValue()));

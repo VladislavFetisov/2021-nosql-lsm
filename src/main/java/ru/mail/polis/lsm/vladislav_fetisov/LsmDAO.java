@@ -40,7 +40,18 @@ public class LsmDAO implements DAO {
     public Iterator<Record> range(@Nullable ByteBuffer fromKey, @Nullable ByteBuffer toKey) {
         Iterator<Record> memRange = map(fromKey, toKey, storage);
         Iterator<Record> SSTablesRange = SSTablesRange(fromKey, toKey);
-        return DAO.mergeTwo(new PeekingIterator<>(SSTablesRange), new PeekingIterator<>(memRange));
+        PeekingIterator<Record> result = DAO.mergeTwo(new PeekingIterator<>(SSTablesRange), new PeekingIterator<>(memRange));
+        return filteredResult(result);
+    }
+
+    private Iterator<Record> filteredResult(PeekingIterator<Record> result) {
+        List<Record> filteredResult = new ArrayList<>();
+        result.forEachRemaining((record) -> {
+            if (!record.isTombstone()) {
+                filteredResult.add(record);
+            }
+        });
+        return filteredResult.iterator();
     }
 
     private Iterator<Record> SSTablesRange(@Nullable ByteBuffer fromKey, @Nullable ByteBuffer toKey) {
@@ -65,8 +76,7 @@ public class LsmDAO implements DAO {
             ByteBuffer key = record.getKey();
             fileOffsets.put(key, memoryConsumption.getAndAdd(size));
             if (record.isTombstone()) {
-                storage.put(key, null);
-                return;
+                //здесь можно уменьшать размер памяти.
             }
             storage.put(key, record);
         }

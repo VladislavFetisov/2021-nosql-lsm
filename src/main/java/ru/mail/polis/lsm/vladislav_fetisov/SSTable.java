@@ -106,6 +106,10 @@ class SSTable implements Closeable {
             while (nmap.position() != rightPos) {
                 ByteBuffer key = read(nmap);
                 ByteBuffer value = read(nmap);
+                if (value == null) {
+                    records.add(Record.tombstone(key));
+                    continue;
+                }
                 records.add(Record.of(key, value));
             }
         } catch (IOException e) {
@@ -129,8 +133,12 @@ class SSTable implements Closeable {
         }
     }
 
+    @Nullable
     private ByteBuffer read(MappedByteBuffer from) {
         int length = from.getInt();
+        if (length == -1) {
+            return null;
+        }
         ByteBuffer limit = from.slice().limit(length);
         from.position(from.position() + length);
         return limit;
@@ -227,12 +235,14 @@ class SSTable implements Closeable {
         writeBuffer(record.getValue(), channel, forLength);
     }
 
-    private static void writeBuffer(ByteBuffer value, WritableByteChannel channel, ByteBuffer forLength) throws IOException {
+    private static void writeBuffer(@Nullable ByteBuffer value, WritableByteChannel channel, ByteBuffer forLength) throws IOException {
         forLength.position(0);
-        forLength.putInt(value.remaining());
+        forLength.putInt((value == null) ? -1 : value.remaining());
         forLength.position(0);
         channel.write(forLength);
-        channel.write(value);
+        if (value != null) {
+            channel.write(value);
+        }
     }
 
     private static void writeInt(int value, WritableByteChannel channel, ByteBuffer elementBuffer) throws IOException {
