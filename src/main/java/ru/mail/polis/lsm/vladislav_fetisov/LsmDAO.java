@@ -20,7 +20,7 @@ import ru.mail.polis.lsm.Record;
 
 public class LsmDAO implements DAO {
     private final long MEMORY_LIMIT = 56 * 1024 * 1024;
-    private static final AtomicInteger SStablesCount = new AtomicInteger();
+    private final AtomicInteger SStablesCount = new AtomicInteger();
     private final AtomicInteger memoryConsumption = new AtomicInteger();
     private final List<SSTable> ssTables = new CopyOnWriteArrayList<>();
     private final NavigableMap<ByteBuffer, Record> storage = new ConcurrentSkipListMap<>();
@@ -31,6 +31,7 @@ public class LsmDAO implements DAO {
         this.config = config;
         try {
             ssTables.addAll(SSTable.getAllSSTables(config.getDir()));
+            SStablesCount.set(ssTables.size());
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -95,7 +96,9 @@ public class LsmDAO implements DAO {
     @Override
     public void close() throws IOException {
         flush();
-        ssTables.forEach(SSTable::close);
+        for (SSTable ssTable : ssTables) {
+            ssTable.close();
+        }
     }
 
     private void flush() throws IOException {

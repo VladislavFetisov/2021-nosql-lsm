@@ -1,7 +1,6 @@
 package ru.mail.polis.lsm.vladislav_fetisov;
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -9,14 +8,14 @@ import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.WritableByteChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
 
@@ -26,10 +25,7 @@ class SSTable implements Closeable {
     private static final String SUFFIX_INDEX = "i";
     private static final Method CLEAN;
     private MappedByteBuffer nmap;
-    private MappedByteBuffer offsetMap;
-    private int[] offsets;
-    private final Path file;
-    private final Path indexFile;
+    private MappedByteBuffer offsetsMap;
 
     static {
         try {
@@ -42,99 +38,86 @@ class SSTable implements Closeable {
     }
 
     private SSTable(Path file) {
-        this.file = file;
-        this.indexFile = Path.of(file + SUFFIX_INDEX);
+        Path offsetsName = pathWithSuffix(file, SUFFIX_INDEX);
+        try (FileChannel tableChannel = FileChannel.open(file, StandardOpenOption.READ);
+             FileChannel offsetChannel = FileChannel.open(offsetsName, StandardOpenOption.READ)) {
+
+            nmap = tableChannel.map(FileChannel.MapMode.READ_ONLY, 0, tableChannel.size());
+            offsetsMap = offsetChannel.map(FileChannel.MapMode.READ_ONLY, 0, offsetChannel.size());
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     static List<SSTable> getAllSSTables(Path dir) throws IOException {
-        File file = dir.toFile();
-        char i = SUFFIX_INDEX.charAt(0);
-        File[] files = file.listFiles(pathname -> {
-            String name = pathname.getName();
-            return name.charAt(name.length() - 1) != i;
-        });
-        if (files == null) {
-            return Collections.emptyList();
+        List<SSTable> result = new ArrayList<>();
+        for (int i = 0; ; i++) {
+            Path SSTable = dir.resolve(String.valueOf(i));
+            if (!Files.exists(SSTable)) {
+                break;
+            }
+            result.add(new SSTable(SSTable));
         }
-        List<SSTable> sortedSSTables = Arrays.stream(files)
-                .map(file1 -> Integer.parseInt(file1.getName()))
-                .sorted()
-                .map(integer -> {
-                    Path tableName = dir.resolve(Path.of(String.valueOf(integer)));
-                    return new SSTable(tableName);
-                })
-                .collect(Collectors.toList());
-        return sortedSSTables;
-
+        return result;
     }
 
     Iterator<Record> range(@Nullable ByteBuffer fromKey, @Nullable ByteBuffer toKey) {
-        if ((fromKey != null || toKey != null) && offsets == null) {
-            readOffsets();
+        ByteBuffer recordsBuffer = nmap.asReadOnlyBuffer();
+        ByteBuffer offsetsBuffer = offsetsMap.asReadOnlyBuffer();
+        int leftPos;
+        int rightPos;
+        int temp;
+
+        if (fromKey == null) {
+            leftPos = 0;
+        } else {
+            temp = Utils.leftBinarySearch(0, offsetsBuffer.limit(), fromKey, recordsBuffer, offsetsBuffer);
+            if (temp == -1) {
+                return Collections.emptyIterator();
+            }
+            offsetsBuffer.position(temp);
+            leftPos = offsetsBuffer.getInt();
         }
-        List<Record> records = new ArrayList<>();
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            if (nmap == null) {
-                nmap = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
+
+
+        if (toKey == null) {
+            rightPos = recordsBuffer.limit();
+        } else {
+            temp = Utils.rightBinarySearch(0, offsetsBuffer.limit(), toKey, recordsBuffer, offsetsBuffer);
+            if (temp == -1) {
+                return Collections.emptyIterator();
             }
-            int leftPos;
-            int rightPos;
-            int temp;
-            if (fromKey == null) {
-                leftPos = 0;
+            if (temp == offsetsBuffer.limit()) {
+                rightPos = recordsBuffer.limit();
             } else {
-                temp = Utils.leftBinarySearch(0, offsets.length, fromKey, nmap, offsets);
-                if (temp == -1) {
-                    return Collections.emptyIterator();
-                }
-                leftPos = offsets[temp];
+                offsetsBuffer.position(temp);
+                rightPos = offsetsBuffer.getInt();
             }
-            if (toKey == null) {
-                rightPos = (int) channel.size();
-            } else {
-                temp = Utils.rightBinarySearch(0, offsets.length, toKey, nmap, offsets);
-                if (temp == -1) {
-                    return Collections.emptyIterator();
-                }
-                if (temp == offsets.length) {
-                    rightPos = (int) channel.size();
-                } else {
-                    rightPos = offsets[temp];
-                }
+        }
+
+
+        recordsBuffer.position(leftPos);
+        return new Iterator<>() {
+            @Override
+            public boolean hasNext() {
+                return recordsBuffer.position() < rightPos;
             }
-            nmap.position(leftPos);
-            while (nmap.position() != rightPos) {
-                ByteBuffer key = read(nmap);
-                ByteBuffer value = read(nmap);
+
+            @Override
+            public Record next() {
+                ByteBuffer key = read(recordsBuffer);
+                ByteBuffer value = read(recordsBuffer);
                 if (value == null) {
-                    records.add(Record.tombstone(key));
-                    continue;
+                    return Record.tombstone(key);
                 }
-                records.add(Record.of(key, value));
+                return Record.of(key, value);
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        nmap.position(0);
-        return records.iterator();
-    }
-
-
-    private void readOffsets() {
-        try (FileChannel channel = FileChannel.open(indexFile, StandardOpenOption.READ)) {
-            offsetMap = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
-            offsets = new int[(int) (channel.size() / Integer.BYTES)];
-            int i = 0;
-            while (offsetMap.hasRemaining()) {
-                offsets[i++] = offsetMap.getInt();
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        };
     }
 
     @Nullable
-    private ByteBuffer read(MappedByteBuffer from) {
+    private ByteBuffer read(ByteBuffer from) {
         int length = from.getInt();
         if (length == -1) {
             return null;
@@ -145,35 +128,44 @@ class SSTable implements Closeable {
     }
 
     static SSTable write(Iterator<Record> records, Path tableName, Iterator<Integer> offsets) throws IOException {
-        ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES);
-        writeToDisc(records, buffer, tableName);
-        writeToDisc(offsets, buffer, Path.of(tableName + SUFFIX_INDEX));
+        String tmpSuffix = "_tmp";
+        Path offsetsName = pathWithSuffix(tableName, SUFFIX_INDEX);
+        Path tableTmp = pathWithSuffix(tableName, tmpSuffix);
+        Path offsetsTmp = pathWithSuffix(offsetsName, tmpSuffix);
+
+        ByteBuffer forLength = ByteBuffer.allocate(Integer.BYTES);
+        try (FileChannel tableChannel = open(tableTmp);
+             FileChannel offsetsChannel = open(offsetsTmp)) {
+            while (records.hasNext()) {
+                Record record = records.next();
+                writeRecord(forLength, tableChannel, record);
+                writeInt(offsets.next(), offsetsChannel, forLength);
+            }
+            tableChannel.force(false);
+            offsetsChannel.force(false);
+        } catch (IOException e) {
+            throw new IOException();
+        }
+        rename(offsetsTmp, offsetsName);
+        rename(tableTmp, tableName);
+
         return new SSTable(tableName);
     }
 
-    private static <E> void writeToDisc(Iterator<E> iterator, ByteBuffer forLength, Path file) throws IOException {
-        if (!iterator.hasNext()) {
-            return;
-        }
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-            E el = iterator.next();
-            if (el instanceof Record) {
-                Record record = (Record) el;
-                writeRecord(forLength, channel, record);
-                while (iterator.hasNext()) {
-                    record = (Record) iterator.next();
-                    writeRecord(forLength, channel, record);
-                }
-            } else if (el instanceof Integer) {
-                int offset = (int) el;
-                writeInt(offset, channel, forLength);
-                while (iterator.hasNext()) {
-                    offset = (int) iterator.next();
-                    writeInt(offset, channel, forLength);
-                }
-            }
-            channel.force(false);
-        }
+    private static void rename(Path source, Path target) throws IOException {
+        Files.deleteIfExists(target);
+        Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    private static Path pathWithSuffix(Path tableName, String suffixIndex) {
+        return tableName.resolveSibling(tableName.getFileName() + suffixIndex);
+    }
+
+    private static FileChannel open(Path filename) throws IOException {
+        return FileChannel.open(filename,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING);
     }
 
     private static void writeRecord(ByteBuffer forLength, FileChannel channel, Record record) throws IOException {
@@ -198,19 +190,32 @@ class SSTable implements Closeable {
         channel.write(elementBuffer);
     }
 
-    public void close() {
-        unmap(nmap);
-        unmap(offsetMap);
-    }
-
-    private void unmap(@Nullable MappedByteBuffer nmap) {
-        if (nmap != null) {
-            try {
-                CLEAN.invoke(null, nmap);
-            } catch (InvocationTargetException | IllegalAccessException e) {
-                throw new IllegalStateException();
+    public void close() throws IOException {
+        IOException exception = null;
+        try {
+            unmap(nmap);
+        } catch (IOException e) {
+            exception = e;
+        }
+        try {
+            unmap(offsetsMap);
+        } catch (IOException e) {
+            if (exception != null) {
+                e.addSuppressed(exception);
             }
+            throw e;
         }
     }
 
+    private void unmap(@Nullable MappedByteBuffer nmap) throws IOException {
+        if (nmap == null) {
+            return;
+        }
+        try {
+            CLEAN.invoke(null, nmap);
+        } catch (InvocationTargetException | IllegalAccessException e) {
+            throw new IOException();
+        }
+    }
 }
+
