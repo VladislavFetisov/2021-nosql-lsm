@@ -1,6 +1,7 @@
 package ru.mail.polis.lsm;
 
 import javax.annotation.Nullable;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
@@ -29,6 +30,11 @@ public class TestDaoWrapper implements DAO {
     @Override
     public void upsert(Record record) {
         delegate.upsert(record);
+    }
+
+    @Override
+    public void compact() throws IOException {
+        delegate.compact();
     }
 
     @Override

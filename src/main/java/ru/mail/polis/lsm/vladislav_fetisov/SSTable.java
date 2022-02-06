@@ -21,9 +21,11 @@ import javax.annotation.Nullable;
 
 import ru.mail.polis.lsm.Record;
 
-class SSTable implements Closeable {
-    private static final String SUFFIX_INDEX = "i";
+public class SSTable implements Closeable {
+    public static final String SUFFIX_INDEX = "i";
     private static final Method CLEAN;
+    private volatile Path file;
+    private volatile Path offsetsName;
     private MappedByteBuffer nmap;
     private MappedByteBuffer offsetsMap;
 
@@ -38,7 +40,9 @@ class SSTable implements Closeable {
     }
 
     private SSTable(Path file) {
+        this.file = file;
         Path offsetsName = pathWithSuffix(file, SUFFIX_INDEX);
+        this.offsetsName = offsetsName;
         try (FileChannel tableChannel = FileChannel.open(file, StandardOpenOption.READ);
              FileChannel offsetChannel = FileChannel.open(offsetsName, StandardOpenOption.READ)) {
 
@@ -50,7 +54,20 @@ class SSTable implements Closeable {
         }
     }
 
-    static List<SSTable> getAllSSTables(Path dir) throws IOException {
+    public Path getFileName() {
+        return file;
+    }
+
+    public Path getOffsetsName() {
+        return offsetsName;
+    }
+
+    public synchronized void setFileName(Path file) {
+        this.file = file;
+        this.offsetsName = pathWithSuffix(file, SUFFIX_INDEX);
+    }
+
+    public static List<SSTable> getAllSSTables(Path dir) throws IOException {
         List<SSTable> result = new ArrayList<>();
         for (int i = 0; ; i++) {
             Path SSTable = dir.resolve(String.valueOf(i));
@@ -69,30 +86,29 @@ class SSTable implements Closeable {
         int rightPos;
         int temp;
 
+        int limit = offsetsBuffer.limit() / Integer.BYTES;
         if (fromKey == null) {
             leftPos = 0;
         } else {
-            temp = Utils.leftBinarySearch(0, offsetsBuffer.limit(), fromKey, recordsBuffer, offsetsBuffer);
+            temp = Utils.leftBinarySearch(0, limit, fromKey, recordsBuffer, offsetsBuffer);
             if (temp == -1) {
                 return Collections.emptyIterator();
             }
-            offsetsBuffer.position(temp);
-            leftPos = offsetsBuffer.getInt();
+            leftPos = Utils.getInt(offsetsBuffer, temp * Integer.BYTES);
         }
 
 
         if (toKey == null) {
             rightPos = recordsBuffer.limit();
         } else {
-            temp = Utils.rightBinarySearch(0, offsetsBuffer.limit(), toKey, recordsBuffer, offsetsBuffer);
+            temp = Utils.rightBinarySearch(0, limit, toKey, recordsBuffer, offsetsBuffer);
             if (temp == -1) {
                 return Collections.emptyIterator();
             }
-            if (temp == offsetsBuffer.limit()) {
+            if (temp == limit) {
                 rightPos = recordsBuffer.limit();
             } else {
-                offsetsBuffer.position(temp);
-                rightPos = offsetsBuffer.getInt();
+                rightPos = Utils.getInt(offsetsBuffer, temp * Integer.BYTES);
             }
         }
 
@@ -127,19 +143,20 @@ class SSTable implements Closeable {
         return limit;
     }
 
-    static SSTable write(Iterator<Record> records, Path tableName, Iterator<Integer> offsets) throws IOException {
+    static SSTable write(Iterator<Record> records, Path tableName) throws IOException {
         String tmpSuffix = "_tmp";
         Path offsetsName = pathWithSuffix(tableName, SUFFIX_INDEX);
         Path tableTmp = pathWithSuffix(tableName, tmpSuffix);
         Path offsetsTmp = pathWithSuffix(offsetsName, tmpSuffix);
-
+        int offset = 0;
         ByteBuffer forLength = ByteBuffer.allocate(Integer.BYTES);
         try (FileChannel tableChannel = open(tableTmp);
              FileChannel offsetsChannel = open(offsetsTmp)) {
             while (records.hasNext()) {
                 Record record = records.next();
                 writeRecord(forLength, tableChannel, record);
-                writeInt(offsets.next(), offsetsChannel, forLength);
+                writeInt(offset, offsetsChannel, forLength);
+                offset += record.size();
             }
             tableChannel.force(false);
             offsetsChannel.force(false);
@@ -152,12 +169,12 @@ class SSTable implements Closeable {
         return new SSTable(tableName);
     }
 
-    private static void rename(Path source, Path target) throws IOException {
+    public static void rename(Path source, Path target) throws IOException {
         Files.deleteIfExists(target);
         Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
     }
 
-    private static Path pathWithSuffix(Path tableName, String suffixIndex) {
+    public static Path pathWithSuffix(Path tableName, String suffixIndex) {
         return tableName.resolveSibling(tableName.getFileName() + suffixIndex);
     }
 

@@ -1,7 +1,9 @@
 package ru.mail.polis.lsm.vladislav_fetisov;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -19,19 +21,16 @@ import ru.mail.polis.lsm.DAOConfig;
 import ru.mail.polis.lsm.Record;
 
 public class LsmDAO implements DAO {
-    private final long MEMORY_LIMIT = 56 * 1024 * 1024;
-    private final AtomicInteger SStablesCount = new AtomicInteger();
+    private final int MEMORY_LIMIT = 56 * 1024 * 1024;
     private final AtomicInteger memoryConsumption = new AtomicInteger();
     private final List<SSTable> ssTables = new CopyOnWriteArrayList<>();
-    private final NavigableMap<ByteBuffer, Record> storage = new ConcurrentSkipListMap<>();
-    private final NavigableMap<ByteBuffer, Integer> fileOffsets = new ConcurrentSkipListMap<>();
+    private NavigableMap<ByteBuffer, Record> storage = new ConcurrentSkipListMap<>();
     private final DAOConfig config;
 
     public LsmDAO(DAOConfig config) {
         this.config = config;
         try {
             ssTables.addAll(SSTable.getAllSSTables(config.getDir()));
-            SStablesCount.set(ssTables.size());
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -74,15 +73,38 @@ public class LsmDAO implements DAO {
                     e.printStackTrace();
                 }
             }
-            ByteBuffer key = record.getKey();
-            fileOffsets.put(key, memoryConsumption.getAndAdd(size));
-            if (record.isTombstone()) {
-                //Здесь можно было бы уменьшать memoryConsumption, но по GC не заберет это значение это не очень
-                //правдивая информация
-            }
-            storage.put(key, record);
+            memoryConsumption.getAndAdd(size);
+            storage.put(record.getKey(), record);
         }
     }
+
+
+    @Override
+    public void compact() throws IOException {
+        synchronized (this) {
+            Iterator<Record> iterator = SSTablesRange(null, null);
+            Path lastTableName = config.getDir().resolve(String.valueOf(ssTables.size()));
+            SSTable bigSSTable = SSTable.write(iterator, lastTableName);
+            for (SSTable ssTable : ssTables) {
+                ssTable.close();
+                Files.deleteIfExists(ssTable.getOffsetsName());
+                Files.deleteIfExists(ssTable.getFileName());
+            }
+            ssTables.clear();
+            Path zeroTableName = config.getDir().resolve(String.valueOf(0));
+            SSTable.rename(SSTable.pathWithSuffix(lastTableName, SSTable.SUFFIX_INDEX),
+                    SSTable.pathWithSuffix(zeroTableName, SSTable.SUFFIX_INDEX));
+            SSTable.rename(lastTableName, zeroTableName);
+
+            bigSSTable.setFileName(zeroTableName);
+            ssTables.add(bigSSTable);
+
+        }
+    }
+
+
+//                Path zeroTableName = config.getDir().resolve(String.valueOf(SStablesCount.getAndIncrement()));
+//                ssTables.add(SSTable.write(iterator, zeroTableName));
 
     private void checkMemory() {
         long usedMemory = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
@@ -104,19 +126,16 @@ public class LsmDAO implements DAO {
     private void flush() throws IOException {
 //        String SStablePrefix = "SStable_";
 //        String ext = ".dat";
-        int count = SStablesCount.getAndIncrement();
-        SSTable ssTable = writeSSTable(count);
+        SSTable ssTable = writeSSTable(ssTables.size());
         ssTables.add(ssTable);
-        storage.clear();
-        fileOffsets.clear();
+        storage = new ConcurrentSkipListMap<>();
         memoryConsumption.set(0);
     }
 
     private SSTable writeSSTable(int count) throws IOException {
         Path tablePath = config.getDir().resolve(String.valueOf(count));
         Iterator<Record> recordIterator = storage.values().iterator();
-        Iterator<Integer> offsetsIterator = fileOffsets.values().iterator();
-        return SSTable.write(recordIterator, tablePath, offsetsIterator);
+        return SSTable.write(recordIterator, tablePath);
     }
 
     static public Iterator<Record> map(@Nullable ByteBuffer fromKey, @Nullable ByteBuffer toKey, NavigableMap<ByteBuffer, Record> storage) {

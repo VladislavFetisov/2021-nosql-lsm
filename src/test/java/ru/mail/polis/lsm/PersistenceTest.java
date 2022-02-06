@@ -5,16 +5,23 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+
+import ru.mail.polis.lsm.vladislav_fetisov.SSTable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static ru.mail.polis.lsm.Utils.assertDaoEquals;
 import static ru.mail.polis.lsm.Utils.key;
 import static ru.mail.polis.lsm.Utils.keyWithSuffix;
 import static ru.mail.polis.lsm.Utils.recursiveDelete;
@@ -196,6 +203,128 @@ class PersistenceTest {
                 assertFalse(range.hasNext());
             }
         }
+    }
+
+    @Test
+    void compactAfterAll(@TempDir Path data) throws IOException {
+        System.out.println(data);
+        int size = 1024 * 1024;
+        byte[] suffix = sizeBasedRandomData(size);
+        byte[] zeros = sizeBasedZeros(size);
+        int recordsCount = (int) (TestDaoWrapper.MAX_HEAP / size);
+        List<String> keys = generateSequence(recordsCount);
+
+        prepareHugeDao(data, recordsCount, suffix, keys, zeros);
+
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            dao.compact();
+            assertEquals(SSTable.getAllSSTables(data).size(), 1);
+            Iterator<Record> range = dao.range(null, null);
+
+            for (int i = 0; i < recordsCount; i++) {
+                verifyNext(suffix, range, i, keys, zeros);
+            }
+            assertFalse(range.hasNext());
+        }
+    }
+
+    @Test
+    void compactAfterClose(@TempDir Path data) throws IOException {
+        System.out.println(data);
+        int size = 1024 * 1024;
+        byte[] suffix = sizeBasedRandomData(size);
+        byte[] zeros = sizeBasedZeros(size);
+        int recordsCount = (int) (TestDaoWrapper.MAX_HEAP / size);
+        List<String> keys = generateSequence(recordsCount);
+
+        prepareHugeDao(data, recordsCount, suffix, keys, zeros);
+
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            dao.compact();
+            assertEquals(SSTable.getAllSSTables(data).size(), 1);
+        }
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            Iterator<Record> range = dao.range(null, null);
+
+            for (int i = 0; i < recordsCount; i++) {
+                verifyNext(suffix, range, i, keys, zeros);
+            }
+            assertFalse(range.hasNext());
+        }
+    }
+
+    @Test
+    void manyCompacts(@TempDir Path data) throws IOException {
+        System.out.println(data);
+        int size = 1024 * 1024;
+        byte[] suffix = sizeBasedRandomData(size);
+        byte[] zeros = sizeBasedZeros(size);
+        int recordsCount = (int) (TestDaoWrapper.MAX_HEAP / size);
+        List<String> keys = generateSequence(recordsCount);
+
+        prepareHugeDao(data, recordsCount, suffix, keys, zeros);
+
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            dao.compact();
+            assertEquals(SSTable.getAllSSTables(data).size(), 1);
+        }
+        prepareHugeDao(data, recordsCount, zeros, keys, zeros); //new batch of values
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            dao.compact();
+            assertEquals(SSTable.getAllSSTables(data).size(), 1);
+            Iterator<Record> range = dao.range(null, null);
+
+            for (int i = 0; i < recordsCount; i++) {
+                verifyNext(zeros, range, i, keys, zeros);
+            }
+            assertFalse(range.hasNext());
+        }
+    }
+    @Test
+    void burnAndCompact(@TempDir Path data) throws IOException {
+        Map<ByteBuffer, ByteBuffer> map = Utils.generateMap(0, 1);
+
+        int overwrites = 100;
+        for (int i = 0; i < overwrites; i++) {
+            try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+                map.forEach((k, v) -> dao.upsert(Record.of(k, v)));
+            }
+
+            // Check
+            try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+                assertDaoEquals(dao, map);
+            }
+        }
+
+        int beforeCompactSize = getDirSize(data);
+        System.out.println("before" + beforeCompactSize);
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            dao.compact();
+        }
+
+        // just for sure
+        try (DAO dao = TestDaoWrapper.create(new DAOConfig(data))) {
+            assertDaoEquals(dao, map);
+        }
+
+        int size = getDirSize(data);
+        System.out.println("after" + size);
+
+        assertTrue(beforeCompactSize / 50 > size);
+    }
+
+    private int getDirSize(Path data) throws IOException {
+        int[] size = new int[1];
+
+        Files.walkFileTree(data, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                size[0] += (int) attrs.size();
+                return FileVisitResult.CONTINUE;
+            }
+        });
+
+        return size[0];
     }
 
     private void verifyNext(byte[] suffix, Iterator<Record> range, int index, List<String> keys, byte[] zeros) {
