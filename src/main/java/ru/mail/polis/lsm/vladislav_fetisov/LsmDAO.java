@@ -83,26 +83,34 @@ public class LsmDAO implements DAO {
     public void compact() throws IOException {
         synchronized (this) {
             Iterator<Record> iterator = SSTablesRange(null, null);
+            Path zeroTableName = config.getDir().resolve(String.valueOf(0));
             Path lastTableName = config.getDir().resolve(String.valueOf(ssTables.size()));
             SSTable bigSSTable = SSTable.write(iterator, lastTableName);
-            for (SSTable ssTable : ssTables) {
-                ssTable.close();
-                Files.deleteIfExists(ssTable.getOffsetsName());
-                Files.deleteIfExists(ssTable.getFileName());
+            if (!ssTables.isEmpty()) {
+                ssTables.get(0).close();
+            }
+            renameSSTable(bigSSTable, zeroTableName);
+
+            for (int i = ssTables.size() - 1; i >= 1; i--) {
+                SSTable table = ssTables.get(i);
+                deleteSSTable(table);
             }
             ssTables.clear();
-            Path zeroTableName = config.getDir().resolve(String.valueOf(0));
-            SSTable.rename(SSTable.pathWithSuffix(lastTableName, SSTable.SUFFIX_INDEX),
-                    SSTable.pathWithSuffix(zeroTableName, SSTable.SUFFIX_INDEX));
-            SSTable.rename(lastTableName, zeroTableName);
-
-            bigSSTable.setFileName(zeroTableName);
             ssTables.add(bigSSTable);
-
         }
     }
 
+    private void deleteSSTable(SSTable table) throws IOException {
+        table.close();
+        Files.deleteIfExists(table.getOffsetsName());
+        Files.deleteIfExists(table.getFileName());
+    }
 
+    private static void renameSSTable(SSTable table, Path tableDest) throws IOException {
+        SSTable.rename(table.getOffsetsName(), SSTable.pathWithSuffix(tableDest, SSTable.SUFFIX_INDEX)); //there might be problem
+        SSTable.rename(tableDest.getFileName(), tableDest);
+        table.setFileName(tableDest);
+    }
 //                Path zeroTableName = config.getDir().resolve(String.valueOf(SStablesCount.getAndIncrement()));
 //                ssTables.add(SSTable.write(iterator, zeroTableName));
 
